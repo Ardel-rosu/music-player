@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Custom Playlist Player</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative&family=Archivo+Black&family=Staatliches&display=swap" rel="stylesheet">
+<style>
+:root { 
+  --bg:#1e1e1e; 
+  --sidebar:#2c2c2c; 
+  --accent:#666666; /* Default Accent: Gray */
+  --marker:#ffffff; /* Default Marker: White */
+  --btn-bg:#333; 
+}
+* { font-family:inherit; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+html,body{margin:0;height:100%;background:var(--bg);color:#fff;-webkit-font-smoothing:antialiased;}
+#app{display:flex;height:100%;}
+#sidebar{width:260px;background:var(--sidebar);padding:16px;overflow-y:auto;}
+h2{margin:0 0 10px;font-size:18px;}
+
+.playlist-item, .song-item{padding:10px;border-radius:6px;margin-bottom:8px;cursor:pointer;background:var(--btn-bg);position:relative;user-select:none;}
+.playlist-item.active, .song-item.active{background:var(--accent);}
+.song-item.dragging{opacity:0.5;}
+.song-item.active::before{content:"";display:inline-block;width:12px;height:12px;margin-right:8px;border-radius:50%;background:var(--marker);animation:pulse 1s infinite;vertical-align:middle;}
+
+@keyframes pulse{0%{transform:scale(0.8);opacity:0.6}50%{transform:scale(1.2);opacity:1}100%{transform:scale(0.8);opacity:0.6}}
+
+#main{flex:1;padding:18px;overflow:auto;}
+#songList{margin-top:10px;max-height:400px;overflow-y:auto;padding-right:4px;-webkit-overflow-scrolling:touch;}
+#songList::-webkit-scrollbar{width:8px;}
+#songList::-webkit-scrollbar-thumb{background:#666;border-radius:4px;}
+#songList::-webkit-scrollbar-track{background:#2c2c2c;border-radius:4px;}
+audio{width:100%;margin-top:20px;}
+#visualizer{width:100%; height:200px; display:block; margin-top:20px;}
+#controls{margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+#controls button{padding:6px 12px;}
+button.active{background:var(--accent);}
+
+#ctxMenu,#songCtxMenu{position:fixed;background:#222;border:1px solid #444;border-radius:6px;padding:6px;display:none;z-index:9999;min-width:150px;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
+#ctxMenu button,#songCtxMenu button{display:block;width:100%;padding:8px;text-align:left;background:transparent;border:0;color:#fff;border-radius:4px;cursor:pointer}
+#ctxMenu button:hover,#songCtxMenu button:hover{background:#333;}
+
+label{display:block;margin-top:8px;font-size:14px;}
+input[type=color], select, input[type=file], button{padding:6px;margin-top:4px;margin-bottom:4px;border-radius:4px;border:none;background:var(--btn-bg);color:#fff;cursor:pointer;}
+
+#nowPlayingContainer {
+  margin-bottom: 15px;
+  padding: 12px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 8px;
+  border-left: 5px solid var(--accent);
+}
+#nowPlayingLabel { font-size: 11px; opacity: 0.6; text-transform: uppercase; letter-spacing: 1.5px; }
+#currentSongTitle { font-size: 20px; display: block; margin-top: 4px; color: var(--accent); font-weight: bold; }
+
+#songSearch {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  background: #252525;
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 8px;
+  outline: none;
+}
+#songSearch:focus { border-color: var(--marker); }
+
+#fileInput { padding:12px; font-size:14px; border-radius:8px; }
+#controls button { padding:10px 18px; font-size:16px; border-radius:12px; }
+
+#storageInfo {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+@media (max-width: 700px) {
+  #app { flex-direction: column; height:100vh; }
+  #sidebar { width: 100%; height: auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; max-height:40vh; overflow-y:auto; }
+  #sidebar h2 { width: 100%; }
+  #main { padding: 12px; flex:1 1 auto; min-height:0; }
+  #songList { max-height: 40vh; }
+  #visualizer { height: 140px; }
+  .playlist-item, .song-item { padding: 12px; font-size: 15px; }
+  #controls { gap:8px; padding-bottom: 12px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <h2>Playlists</h2>
+    <div id="playlistList"></div>
+    <button id="newPlaylistBtn">+ New Playlist</button>
+    <button id="exportBtn">Export Playlists</button>
+    <button id="importBtn">Import Playlists</button>
+    <input type="file" id="importInput" accept="application/json" style="display:none"/>
+    <h2>Customization</h2>
+    <label>Font:</label>
+    <select id="fontSelect">
+      <option style="font-family: Arial;">Arial</option>
+      <option style="font-family: Verdana;">Verdana</option>
+      <option style="font-family: Tahoma;">Tahoma</option>
+      <option style="font-family: 'Times New Roman';">Times New Roman</option>
+      <option style="font-family: 'Courier New';">Courier New</option>
+      <option style="font-family: Georgia;">Georgia</option>
+      <option style="font-family: Palatino;">Palatino</option>
+      <option style="font-family: 'Archivo Black', sans-serif;">Wide Font</option>
+      <option style="font-family: 'Cinzel Decorative', serif;">Papyrus</option>
+      <option style="font-family: 'Comic Sans MS', cursive;">Comic Sans MS</option>
+      <option style="font-family: 'Arial Black', sans-serif;">Arial Black</option>
+      <option style="font-family: 'Lucida Console', monospace;">Lucida Console</option>
+      <option style="font-family: 'Lucida Sans', sans-serif;">Lucida Sans</option>
+      <option style="font-family: 'Franklin Gothic Medium', sans-serif;">Franklin Gothic Medium</option>
+      <option style="font-family: 'Gill Sans', sans-serif;">Gill Sans</option>
+      <option style="font-family: 'Futura', sans-serif;">Futura</option>
+      <option style="font-family: 'Century Gothic', sans-serif;">Century Gothic</option>
+      <option style="font-family: 'Wingdings', sans-serif;">Wingdings</option>
+      <option style="font-family: Impact, sans-serif;">Impact</option>
+      <option style="font-family: Courier, monospace;">Courier</option>
+    </select>
+    <label>Background:</label><input type="color" id="bgColor" value="#1e1e1e"/>
+    <label>Sidebar:</label><input type="color" id="sidebarColor" value="#2c2c2c"/>
+    <label>Accent:</label><input type="color" id="accentColor" value="#666666"/>
+    <label>Marker:</label><input type="color" id="markerColor" value="#ffffff"/>
+    <label>Buttons:</label><input type="color" id="btnColor" value="#333333"/>
+    <button id="resetThemeBtn">Reset Default</button>
+
+    <div id="storageInfo">
+        Storage Used: <span id="storageSize">0 MB</span>
+    </div>
+  </aside>
+  <main id="main">
+    <h2 id="playlistTitle">No playlist selected</h2>
+    
+    <div id="nowPlayingContainer">
+      <span id="nowPlayingLabel">Now Playing:</span>
+      <span id="currentSongTitle">None</span>
+    </div>
+
+    <input id="fileInput" type="file" accept="audio/*" multiple/>
+    <input type="text" id="songSearch" placeholder="Search songs in playlist...">
+    
+    <div id="songList"></div>
+    <audio id="player" controls></audio>
+    <canvas id="visualizer"></canvas>
+    <div id="controls">
+      <button id="prevBtn">Previous</button>
+      <button id="playPauseBtn">Play/Pause</button>
+      <button id="nextBtn">Next</button>
+      <button id="shuffleBtn">Shuffle</button>
+      <button id="loopBtn">Loop</button>
+    </div>
+  </main>
+</div>
+
+<div id="ctxMenu" aria-hidden="true">
+  <button id="ctxRename">Rename</button>
+  <button id="ctxClear">Clear Songs</button>
+  <button id="ctxDelete" style="color:#ff8585">Delete Playlist</button>
+</div>
+<div id="songCtxMenu" aria-hidden="true">
+  <button id="songPlay">Play</button>
+  <button id="songRename">Rename</button>
+  <button id="songDelete" style="color:#ff8585">Delete</button>
+</div>
+
+<script>
+(async function(){
+/* --- IndexedDB setup --- */
+const db = await new Promise(res=>{
+  const r = indexedDB.open("PlaylistDB",1);
+  r.onupgradeneeded=e=>{
+    const db = e.target.result;
+    if(!db.objectStoreNames.contains("songs")) db.createObjectStore("songs",{keyPath:"id"});
+  };
+  r.onsuccess=e=>res(e.target.result);
+  r.onerror=()=>res(null);
+});
+const tx = (mode)=>db.transaction("songs",mode).objectStore("songs");
+const saveSongBlob = (id,blob)=>tx("readwrite").put({id,blob});
+const getSongBlob = id=>new Promise(r=>{const req=tx("readonly").get(id); req.onsuccess=()=>r(req.result?.blob||null); req.onerror=()=>r(null);});
+const deleteSongBlob = id=>tx("readwrite").delete(id);
+
+const updateStorageCounter = async () => {
+    if (navigator.storage && navigator.storage.estimate) {
+        const estimate = await navigator.storage.estimate();
+        const usedMB = (estimate.usage / (1024 * 1024)).toFixed(2);
+        $("storageSize").textContent = usedMB + " MB";
+    }
+};
+
+let playlists=JSON.parse(localStorage.getItem("playlists")||"{}");
+let songNames=JSON.parse(localStorage.getItem("songNames")||"{}");
+let currentPlaylist=null, currentIndex=0, rightClickedSongId=null, ctxTargetPlaylist=null;
+let dragSrcId=null, shuffle=false, loop=false;
+
+const $=(id)=>document.getElementById(id);
+const playlistList=$("playlistList"), songList=$("songList"), player=$("player"), playlistTitle=$("playlistTitle"), currentSongTitle=$("currentSongTitle");
+const songSearch=$("songSearch"), fileInput=$("fileInput"), newPlaylistBtn=$("newPlaylistBtn");
+const fontSelect=$("fontSelect"), bgColor=$("bgColor"), sidebarColor=$("sidebarColor"), accentColor=$("accentColor"), markerColor=$("markerColor"), btnColor=$("btnColor"), resetThemeBtn=$("resetThemeBtn");
+const prevBtn=$("prevBtn"), playPauseBtn=$("playPauseBtn"), nextBtn=$("nextBtn"), shuffleBtn=$("shuffleBtn"), loopBtn=$("loopBtn");
+const ctxMenu=$("ctxMenu"), songCtxMenu=$("songCtxMenu");
+const importBtn=$("importBtn"), exportBtn=$("exportBtn"), importInput=$("importInput");
+const canvas=$("visualizer"), ctx=canvas.getContext("2d");
+
+const savePlaylists=()=>localStorage.setItem("playlists",JSON.stringify(playlists));
+const saveSongNames=()=>localStorage.setItem("songNames",JSON.stringify(songNames));
+
+const applyTheme=()=>{
+  document.body.style.fontFamily=fontSelect.value;
+  document.body.style.backgroundColor=bgColor.value;
+  $("sidebar").style.backgroundColor=sidebarColor.value;
+  document.documentElement.style.setProperty("--accent",accentColor.value);
+  document.documentElement.style.setProperty("--marker",markerColor.value);
+  document.documentElement.style.setProperty("--btn-bg",btnColor.value);
+  
+  document.querySelectorAll(".playlist-item").forEach(d=>{
+    if(d.textContent===currentPlaylist){ d.style.backgroundColor=accentColor.value; } else { d.style.backgroundColor=""; }
+  });
+  document.querySelectorAll(".song-item").forEach((d)=>{
+    const songId = d.dataset.id;
+    const ids = playlists[currentPlaylist] || [];
+    if(ids[currentIndex] === songId && player.src && !player.paused){ d.style.backgroundColor=accentColor.value; d.classList.add("active"); } else { d.style.backgroundColor=""; d.classList.remove("active"); }
+  });
+  localStorage.setItem("theme",JSON.stringify({font:fontSelect.value,bg:bgColor.value,sidebar:sidebarColor.value,accent:accentColor.value,marker:markerColor.value,btn:btnColor.value}));
+};
+
+const loadTheme=()=>{
+  const t=JSON.parse(localStorage.getItem("theme")||"{}");
+  if(t.font) fontSelect.value=t.font; 
+  if(t.bg) bgColor.value=t.bg; 
+  if(t.sidebar) sidebarColor.value=t.sidebar;
+  if(t.accent) accentColor.value=t.accent; 
+  if(t.marker) markerColor.value=t.marker;
+  if(t.btn) btnColor.value=t.btn;
+  applyTheme();
+};
+[fontSelect,bgColor,sidebarColor,accentColor,markerColor,btnColor].forEach(el=>el.oninput=applyTheme);
+
+function mobileLongPress(element, callback){
+  let pressTimer = null;
+  element.addEventListener("touchstart", e=>{
+    if(e.touches.length>1) return;
+    pressTimer = setTimeout(()=>callback(e), 550);
+  }, {passive:true});
+  element.addEventListener("touchend", ()=> clearTimeout(pressTimer));
+  element.addEventListener("touchmove", ()=> clearTimeout(pressTimer), {passive:true});
+}
+
+let touchDragId = null;
+function enableTouchDrag(div, id) {
+  div.addEventListener("touchstart", e=>{
+    if(!currentPlaylist) return;
+    touchDragId = id;
+    div.classList.add("dragging");
+    if(navigator.vibrate) navigator.vibrate(10);
+  }, {passive:true});
+  div.addEventListener("touchmove", e=>{
+    if(!touchDragId) return;
+    const touch = e.touches[0];
+    const touchedEl = document.elementFromPoint(touch.clientX, touch.clientY);
+    if(!touchedEl) return;
+    const target = touchedEl.closest(".song-item");
+    if(!target) return;
+    const arr = playlists[currentPlaylist];
+    const from = arr.indexOf(touchDragId), to = arr.indexOf(target.dataset.id);
+    if(from === -1 || to === -1 || from === to) return;
+    arr.splice(from,1); arr.splice(to,0,touchDragId);
+    savePlaylists(); renderSongs(); 
+  }, {passive:true});
+  div.addEventListener("touchend", ()=> { div.classList.remove("dragging"); touchDragId = null; });
+}
+
+const renderPlaylists=()=>{
+  playlistList.innerHTML="";
+  Object.keys(playlists).forEach(name=>{
+    const d=document.createElement("div"); d.className="playlist-item"; d.textContent=name;
+    if(name===currentPlaylist){ d.classList.add("active"); d.style.backgroundColor = accentColor.value; }
+    d.onclick=()=>{ currentPlaylist=name; currentIndex=0; songSearch.value=""; renderPlaylists(); renderSongs(); }
+    d.oncontextmenu=e=>{ e.preventDefault(); ctxTargetPlaylist=name; showMenu(ctxMenu,e.clientX,e.clientY); }
+    mobileLongPress(d, e=>{ ctxTargetPlaylist=name; const touch = e.touches[0]; showMenu(ctxMenu, touch.clientX, touch.clientY); });
+    playlistList.appendChild(d);
+  });
+  updateStorageCounter();
+};
+
+const renderSongs=async()=>{
+  songList.innerHTML="";
+  if(!currentPlaylist){ playlistTitle.textContent="No playlist selected"; return; }
+  playlistTitle.textContent=currentPlaylist;
+  const ids = playlists[currentPlaylist] || [];
+  const query = songSearch.value.toLowerCase();
+
+  for(let idx=0; idx<ids.length; idx++){
+    const id = ids[idx];
+    const name = songNames[id] || "Loading...";
+    if (query && !name.toLowerCase().includes(query)) continue;
+    const div = document.createElement("div");
+    div.className = "song-item"; div.dataset.id = id; div.textContent = name;
+    div.setAttribute("draggable","true");
+    if(idx===currentIndex && player.src && !player.paused){
+      div.classList.add("active"); div.style.backgroundColor = accentColor.value;
+    }
+    div.onclick=()=> playSong(id, idx);
+    div.ondragstart = e => { dragSrcId = id; div.classList.add("dragging"); }
+    div.ondragend = e => { div.classList.remove("dragging"); dragSrcId = null; }
+    div.ondragover = e => e.preventDefault();
+    div.ondrop = e => {
+      e.preventDefault();
+      const arr = playlists[currentPlaylist];
+      const f = arr.indexOf(dragSrcId), t = arr.indexOf(id);
+      if(f===-1||t===-1) return;
+      arr.splice(f,1); arr.splice(t,0,dragSrcId);
+      savePlaylists(); renderSongs();
+    };
+    enableTouchDrag(div,id);
+    div.oncontextmenu = e => { e.preventDefault(); rightClickedSongId = id; showMenu(songCtxMenu, e.clientX, e.clientY); }
+    mobileLongPress(div, e => { rightClickedSongId = id; const touch = e.touches[0]; showMenu(songCtxMenu, touch.clientX, touch.clientY); });
+    songList.appendChild(div);
+  }
+};
+
+const playSong = async (id, index) => {
+  currentIndex = index;
+  currentSongTitle.textContent = songNames[id] || "Unknown";
+  const blob = await getSongBlob(id);
+  if(!blob) return alert("File missing");
+  if(player.src) URL.revokeObjectURL(player.src);
+  player.src = URL.createObjectURL(blob);
+  player.play();
+  renderSongs();
+};
+
+const changeSong = async (next = true) => {
+  if(!currentPlaylist) return;
+  const ids = playlists[currentPlaylist];
+  if(!ids || !ids.length) return;
+  if(shuffle) currentIndex = Math.floor(Math.random()*ids.length);
+  else currentIndex = next ? (currentIndex+1)%ids.length : (currentIndex-1+ids.length)%ids.length;
+  playSong(ids[currentIndex], currentIndex);
+};
+
+const highlightButton = (btn, duration=200)=>{ btn.classList.add("active"); setTimeout(()=>btn.classList.remove("active"),duration); };
+
+playPauseBtn.onclick=()=>{ player.paused ? player.play() : player.pause(); highlightButton(playPauseBtn); applyTheme(); }
+prevBtn.onclick=()=>{ changeSong(false); highlightButton(prevBtn); }
+nextBtn.onclick=()=>{ changeSong(true); highlightButton(nextBtn); }
+shuffleBtn.onclick=()=>{ shuffle = !shuffle; shuffleBtn.classList.toggle("active", shuffle); }
+loopBtn.onclick=()=>{ loop = !loop; loopBtn.classList.toggle("active", loop); }
+player.onended = ()=> loop ? (player.currentTime=0,player.play()) : changeSong(true);
+
+document.addEventListener("keydown", e => { 
+    if (e.code === "Space") { 
+        if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+        e.preventDefault(); player.paused ? player.play() : player.pause(); highlightButton(playPauseBtn); 
+    }
+});
+
+const showMenu=(m,x,y)=>{
+  m.style.display="block";
+  m.style.left = Math.min(window.innerWidth - m.offsetWidth - 8, x) + "px";
+  m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, y) + "px";
+};
+const hideMenus=()=>{ $("ctxMenu").style.display="none"; $("songCtxMenu").style.display="none"; };
+document.addEventListener("click", hideMenus);
+document.addEventListener("touchstart", hideMenus, {passive:true});
+
+const barHeights = [];
+let audioCtx, analyser, source, dataArray, bufferLength;
+const setupVisualizer = () => {
+  if (!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser(); analyser.fftSize = 256;
+    bufferLength = analyser.frequencyBinCount; dataArray = new Uint8Array(bufferLength);
+    for(let i=0;i<bufferLength;i++) barHeights[i]=0;
+    try{
+      source = audioCtx.createMediaElementSource(player);
+      source.connect(analyser); analyser.connect(audioCtx.destination);
+    }catch(err){ console.warn(err); }
+  }
+};
+const drawVisualizer = ()=>{
+  requestAnimationFrame(drawVisualizer);
+  if(!analyser) return;
+  analyser.getByteFrequencyData(dataArray);
+  ctx.fillStyle = bgColor.value; ctx.fillRect(0,0,canvas.width,canvas.height);
+  const barWidth = canvas.width / bufferLength * 2.2;
+  const maxHeight = canvas.height * 0.9;
+  let x = 0;
+  let currentMaxHeight=0;
+  for(let i=0;i<bufferLength;i++){
+    const scaledHeight = Math.pow(dataArray[i]/255,1.5)*maxHeight;
+    barHeights[i] += (scaledHeight - barHeights[i]) * 0.25;
+    if(barHeights[i] > currentMaxHeight) currentMaxHeight = barHeights[i];
+  }
+  const gradient = ctx.createLinearGradient(0, canvas.height - currentMaxHeight, 0, canvas.height);
+  gradient.addColorStop(0, markerColor.value);
+  gradient.addColorStop(0.5, accentColor.value);
+  gradient.addColorStop(1, bgColor.value);
+  for(let i=0;i<bufferLength;i++){
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, canvas.height - barHeights[i], barWidth, barHeights[i]);
+    x += barWidth + 2;
+  }
+};
+
+window.onresize = () => { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; };
+window.onresize();
+setupVisualizer();
+drawVisualizer();
+loadTheme();
+renderPlaylists();
+renderSongs();
+player.onplay = () => { if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); applyTheme(); };
+player.onpause = ()=>{ applyTheme(); };
+
+$("ctxRename").onclick=()=>{
+  const n = prompt("New name", ctxTargetPlaylist);
+  if(!n || n===ctxTargetPlaylist || playlists[n]) return;
+  playlists[n] = playlists[ctxTargetPlaylist]; delete playlists[ctxTargetPlaylist];
+  if(currentPlaylist===ctxTargetPlaylist) currentPlaylist = n;
+  savePlaylists(); renderPlaylists(); renderSongs();
+};
+$("ctxClear").onclick=()=>{ if(confirm("Clear songs?")){ playlists[ctxTargetPlaylist] = []; savePlaylists(); renderSongs(); } };
+$("ctxDelete").onclick=()=>{ if(confirm("Delete playlist?")){ playlists[ctxTargetPlaylist].forEach(id=>deleteSongBlob(id)); delete playlists[ctxTargetPlaylist]; if(currentPlaylist===ctxTargetPlaylist) currentPlaylist=null; savePlaylists(); renderPlaylists(); renderSongs(); } };
+$("songPlay").onclick=()=> { const idx = playlists[currentPlaylist].indexOf(rightClickedSongId); if(idx>-1) playSong(rightClickedSongId, idx); };
+$("songRename").onclick=()=>{ const n = prompt("New name", songNames[rightClickedSongId]); if(n){ songNames[rightClickedSongId]=n; saveSongNames(); renderSongs(); } };
+$("songDelete").onclick=()=>{ if(confirm("Delete song?")){ const idx=playlists[currentPlaylist].indexOf(rightClickedSongId); if(idx>-1) playlists[currentPlaylist].splice(idx,1); deleteSongBlob(rightClickedSongId); delete songNames[rightClickedSongId]; savePlaylists(); saveSongNames(); renderSongs(); } };
+
+$("exportBtn").onclick=async ()=>{
+  const data={playlists,songNames,songs:{}};
+  for(const id of Object.keys(songNames)){
+    const blob = await getSongBlob(id); if(!blob) continue;
+    const buf = await blob.arrayBuffer(), bytes = new Uint8Array(buf);
+    let binary = ''; for(let i=0;i<bytes.length;i+=0x8000) binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i,i+0x8000)));
+    data.songs[id] = { data: btoa(binary) };
+  }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data)],{type:"application/json"}));
+  const a=document.createElement("a"); a.href=url; a.download="playlists.json"; a.click(); URL.revokeObjectURL(url);
+};
+$("importBtn").onclick=()=>$("importInput").click();
+$("importInput").onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const text = await f.text();
+  try {
+    const d = JSON.parse(text); playlists = d.playlists; songNames = d.songNames;
+    savePlaylists(); saveSongNames();
+    if(d.songs) for(const id of Object.keys(d.songs)) await saveSongBlob(id, new Blob([Uint8Array.from(atob(d.songs[id].data), c=>c.charCodeAt(0))]));
+    renderPlaylists(); renderSongs();
+  } catch(err) { alert("Import failed"); }
+};
+$("newPlaylistBtn").onclick=()=>{ const name=prompt("Enter name:"); if(name && !playlists[name]){ playlists[name]=[]; currentPlaylist=name; savePlaylists(); renderPlaylists(); renderSongs(); } };
+$("fileInput").onchange=async e=>{
+  if(!currentPlaylist) return alert("Select playlist");
+  for(const f of e.target.files){
+    const id = Date.now()+Math.random().toString(36).substr(2,5);
+    playlists[currentPlaylist].push(id); songNames[id] = f.name;
+    saveSongNames(); savePlaylists(); await saveSongBlob(id,f);
+  }
+  renderSongs();
+};
+$("songSearch").oninput = renderSongs;
+$("resetThemeBtn").onclick=()=>{
+  fontSelect.value="Arial"; 
+  bgColor.value="#1e1e1e"; 
+  sidebarColor.value="#2c2c2c"; 
+  accentColor.value="#666666"; /* Reset to Gray */
+  markerColor.value="#ffffff"; /* Reset to White */
+  btnColor.value="#333333";
+  applyTheme();
+};
+})();
+</script>
+</body>
+</html>
