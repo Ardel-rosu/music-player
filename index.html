@@ -76,6 +76,7 @@ input[type=color], select, input[type=file], button{padding:6px;margin-top:4px;m
   font-size: 12px;
   opacity: 0.7;
 }
+.stat-line { margin-top: 4px; }
 
 @media (max-width: 700px) {
   #app { flex-direction: column; height:100vh; }
@@ -130,7 +131,9 @@ input[type=color], select, input[type=file], button{padding:6px;margin-top:4px;m
     <button id="resetThemeBtn">Reset Default</button>
 
     <div id="storageInfo">
-        Storage Used: <span id="storageSize">0 MB</span>
+        <div class="stat-line">Storage Used: <span id="storageSize">0 MB</span></div>
+        <div class="stat-line">Songs in Playlist: <span id="songCountText">0</span></div>
+        <div class="stat-line">Total Duration: <span id="totalTimeText">0:00</span></div>
     </div>
   </aside>
   <main id="main">
@@ -210,6 +213,48 @@ const canvas=$("visualizer"), ctx=canvas.getContext("2d");
 const savePlaylists=()=>localStorage.setItem("playlists",JSON.stringify(playlists));
 const saveSongNames=()=>localStorage.setItem("songNames",JSON.stringify(songNames));
 
+/* --- Stats Calculation --- */
+const updatePlaylistStats = async () => {
+  if (!currentPlaylist) {
+    $("songCountText").textContent = "0";
+    $("totalTimeText").textContent = "0:00";
+    return;
+  }
+  const ids = playlists[currentPlaylist] || [];
+  $("songCountText").textContent = ids.length;
+
+  let totalSeconds = 0;
+  // Calculate duration (this creates temporary audio elements to check length)
+  const durationPromises = ids.map(id => new Promise(async (resolve) => {
+    const blob = await getSongBlob(id);
+    if (!blob) return resolve(0);
+    const url = URL.createObjectURL(blob);
+    const tempAudio = new Audio();
+    tempAudio.addEventListener('loadedmetadata', () => {
+      const dur = tempAudio.duration;
+      URL.revokeObjectURL(url);
+      resolve(dur);
+    });
+    tempAudio.addEventListener('error', () => {
+      URL.revokeObjectURL(url);
+      resolve(0);
+    });
+    tempAudio.src = url;
+  }));
+
+  const durations = await Promise.all(durationPromises);
+  totalSeconds = durations.reduce((a, b) => a + b, 0);
+
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  
+  let timeStr = "";
+  if (h > 0) timeStr += h + ":";
+  timeStr += (h > 0 && m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s);
+  $("totalTimeText").textContent = timeStr;
+};
+
 const applyTheme=()=>{
   document.body.style.fontFamily=fontSelect.value;
   document.body.style.backgroundColor=bgColor.value;
@@ -280,7 +325,7 @@ const renderPlaylists=()=>{
   Object.keys(playlists).forEach(name=>{
     const d=document.createElement("div"); d.className="playlist-item"; d.textContent=name;
     if(name===currentPlaylist){ d.classList.add("active"); d.style.backgroundColor = accentColor.value; }
-    d.onclick=()=>{ currentPlaylist=name; currentIndex=0; songSearch.value=""; renderPlaylists(); renderSongs(); }
+    d.onclick=()=>{ currentPlaylist=name; currentIndex=0; songSearch.value=""; renderPlaylists(); renderSongs(); updatePlaylistStats(); }
     d.oncontextmenu=e=>{ e.preventDefault(); ctxTargetPlaylist=name; showMenu(ctxMenu,e.clientX,e.clientY); }
     mobileLongPress(d, e=>{ ctxTargetPlaylist=name; const touch = e.touches[0]; showMenu(ctxMenu, touch.clientX, touch.clientY); });
     playlistList.appendChild(d);
@@ -423,13 +468,13 @@ $("ctxRename").onclick=()=>{
   if(!n || n===ctxTargetPlaylist || playlists[n]) return;
   playlists[n] = playlists[ctxTargetPlaylist]; delete playlists[ctxTargetPlaylist];
   if(currentPlaylist===ctxTargetPlaylist) currentPlaylist = n;
-  savePlaylists(); renderPlaylists(); renderSongs();
+  savePlaylists(); renderPlaylists(); renderSongs(); updatePlaylistStats();
 };
-$("ctxClear").onclick=()=>{ if(confirm("Clear songs?")){ playlists[ctxTargetPlaylist] = []; savePlaylists(); renderSongs(); } };
-$("ctxDelete").onclick=()=>{ if(confirm("Delete playlist?")){ playlists[ctxTargetPlaylist].forEach(id=>deleteSongBlob(id)); delete playlists[ctxTargetPlaylist]; if(currentPlaylist===ctxTargetPlaylist) currentPlaylist=null; savePlaylists(); renderPlaylists(); renderSongs(); } };
+$("ctxClear").onclick=()=>{ if(confirm("Clear songs?")){ playlists[ctxTargetPlaylist] = []; savePlaylists(); renderSongs(); updatePlaylistStats(); } };
+$("ctxDelete").onclick=()=>{ if(confirm("Delete playlist?")){ playlists[ctxTargetPlaylist].forEach(id=>deleteSongBlob(id)); delete playlists[ctxTargetPlaylist]; if(currentPlaylist===ctxTargetPlaylist) currentPlaylist=null; savePlaylists(); renderPlaylists(); renderSongs(); updatePlaylistStats(); } };
 $("songPlay").onclick=()=> { const idx = playlists[currentPlaylist].indexOf(rightClickedSongId); if(idx>-1) playSong(rightClickedSongId, idx); };
 $("songRename").onclick=()=>{ const n = prompt("New name", songNames[rightClickedSongId]); if(n){ songNames[rightClickedSongId]=n; saveSongNames(); renderSongs(); } };
-$("songDelete").onclick=()=>{ if(confirm("Delete song?")){ const idx=playlists[currentPlaylist].indexOf(rightClickedSongId); if(idx>-1) playlists[currentPlaylist].splice(idx,1); deleteSongBlob(rightClickedSongId); delete songNames[rightClickedSongId]; savePlaylists(); saveSongNames(); renderSongs(); } };
+$("songDelete").onclick=()=>{ if(confirm("Delete song?")){ const idx=playlists[currentPlaylist].indexOf(rightClickedSongId); if(idx>-1) playlists[currentPlaylist].splice(idx,1); deleteSongBlob(rightClickedSongId); delete songNames[rightClickedSongId]; savePlaylists(); saveSongNames(); renderSongs(); updatePlaylistStats(); } };
 
 $("exportBtn").onclick=async ()=>{
   const data={playlists,songNames,songs:{}};
@@ -450,10 +495,10 @@ $("importInput").onchange=async e=>{
     const d = JSON.parse(text); playlists = d.playlists; songNames = d.songNames;
     savePlaylists(); saveSongNames();
     if(d.songs) for(const id of Object.keys(d.songs)) await saveSongBlob(id, new Blob([Uint8Array.from(atob(d.songs[id].data), c=>c.charCodeAt(0))]));
-    renderPlaylists(); renderSongs();
+    renderPlaylists(); renderSongs(); updatePlaylistStats();
   } catch(err) { alert("Import failed"); }
 };
-$("newPlaylistBtn").onclick=()=>{ const name=prompt("Enter name:"); if(name && !playlists[name]){ playlists[name]=[]; currentPlaylist=name; savePlaylists(); renderPlaylists(); renderSongs(); } };
+$("newPlaylistBtn").onclick=()=>{ const name=prompt("Enter name:"); if(name && !playlists[name]){ playlists[name]=[]; currentPlaylist=name; savePlaylists(); renderPlaylists(); renderSongs(); updatePlaylistStats(); } };
 $("fileInput").onchange=async e=>{
   if(!currentPlaylist) return alert("Select playlist");
   for(const f of e.target.files){
@@ -462,6 +507,7 @@ $("fileInput").onchange=async e=>{
     saveSongNames(); savePlaylists(); await saveSongBlob(id,f);
   }
   renderSongs();
+  updatePlaylistStats();
 };
 $("songSearch").oninput = renderSongs;
 $("resetThemeBtn").onclick=()=>{
